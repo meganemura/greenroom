@@ -26,6 +26,27 @@ RSpec.describe RuboCop::Cop::Greenroom::UnsafeScienceBody, :config do
     RUBY
   end
 
+  # This example pins deliberate over-rejection rather than correct behaviour.
+  # A binding inside a nested def reads that def's scope, and it reads the same
+  # scope before and after the body moves, so a precise cop would stay quiet
+  # here. This one reports it, because the check for return earns its
+  # complexity and this shape does not: a def written inside a science body is
+  # not a shape anyone needs to write. A change that makes this example pass by
+  # staying quiet is loosening the cop, so decide that on purpose. Reporting
+  # too much sends the change to a human reviewer, which is the safe direction.
+  it "rejects binding in a nested def, by design" do
+    expect_offense(<<~RUBY)
+      Scientist.run "price-v2" do |e|
+        e.use do
+          def helper
+            binding
+            ^^^^^^^ A binding in a science body observes the block scope.
+          end
+        end
+      end
+    RUBY
+  end
+
   it "accepts return in a nested def" do
     expect_no_offenses(<<~RUBY)
       Scientist.run "price-v2" do |e|
