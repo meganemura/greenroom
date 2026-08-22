@@ -107,6 +107,7 @@ module Greenroom
       class Analyzer
         SourceError = Class.new(StandardError)
         Scope = Data.define(:name, :node, :methods, :statements)
+        Experiment = Data.define(:name, :method, :use_block, :candidate)
 
         def initialize(before, after)
           # Syntax trees omit source locations. Therefore, comment and white
@@ -173,6 +174,24 @@ module Greenroom
 
           candidate_name = candidate.children[0]
           Result.new(true, "Accepted experiment #{experiment} with candidate #{candidate_name}.", experiment, candidate_name.to_s)
+        end
+
+        # The judge uses the same structural relation that the merge gate
+        # verifies. A second parser could accept a shape that the gate rejects.
+        def experiments
+          scopes(@after).values.flat_map do |scope|
+            scope.methods.values.filter_map do |method|
+              science = science_blocks(method)
+              next unless science
+
+              use_block, try_block, _compare_block, name = science
+              try_body = block_body(try_block)
+              next unless try_body&.send_type? && try_body.receiver.nil?
+
+              candidate = scope.methods[try_body.method_name]
+              Experiment.new(name, method, use_block, candidate) if candidate
+            end
+          end
         end
 
         private
