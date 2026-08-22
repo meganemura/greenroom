@@ -4,6 +4,21 @@ This repository contains the `greenroom` gem and the `rubocop-greenroom` gem.
 GitHub Actions publishes each gem through RubyGems.org Trusted Publishing.
 The workflows do not use a stored RubyGems.org API key.
 
+## Prepare the GitHub environments
+
+Create two repository environments under **Settings > Environments**:
+
+- `release-greenroom`
+- `release-rubocop-greenroom`
+
+Each release job names one of them, so an approval request says which gem it
+gates. A single shared environment would ask a reviewer to approve a release
+without naming the gem going out.
+
+Add the protection rules each gem deserves. A required reviewer holds the job
+until a person approves it, and the job stops at that point rather than after
+a push that nobody can take back.
+
 ## Prepare the RubyGems.org account
 
 1. Sign in to the RubyGems.org account that will own the gems.
@@ -24,7 +39,7 @@ Create a pending trusted publisher with these values:
 | Repository owner | `meganemura` |
 | Repository name | `greenroom` |
 | Workflow filename | `release-greenroom.yml` |
-| Environment | `release` |
+| Environment | `release-greenroom` |
 | Workflow repository owner | Leave this field blank. |
 | Workflow repository name | Leave this field blank. |
 
@@ -40,7 +55,7 @@ Create a second pending trusted publisher with these values:
 | Repository owner | `meganemura` |
 | Repository name | `greenroom` |
 | Workflow filename | `release-rubocop-greenroom.yml` |
-| Environment | `release` |
+| Environment | `release-rubocop-greenroom` |
 | Workflow repository owner | Leave this field blank. |
 | Workflow repository name | Leave this field blank. |
 

@@ -14,7 +14,11 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    environment: release
+    # One environment per gem, so the approval request names the gem it
+    # gates. A shared name would ask a reviewer to approve "release"
+    # without saying which gem is going out, and a gate nobody can read
+    # does not stop the thing it exists to stop.
+    environment: release-greenroom
     permissions:
       contents: write
       id-token: write
