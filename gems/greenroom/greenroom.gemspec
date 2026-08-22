@@ -42,4 +42,5 @@ Gem::Specification.new do |spec|
   # constraint rather than an exact pin, because an exact pin in a library breaks the
   # dependency resolution of every host application that carries its own constraint.
   spec.add_dependency "scientist", "~> 1.6", ">= 1.6.5"
+  spec.add_dependency "rubocop-ast", "~> 1.50"
 end

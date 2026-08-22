@@ -27,6 +27,26 @@ identifier and a digest of the value, never the value itself.
   lives in `greenroom/reporter/new_relic`, a separate file a host requires
   on purpose.
 
+## Check a commit
+
+`greenroom check` accepts a commit when it contains one safe experiment
+change. The command compares the commit with its parent through Git and
+compares the two Ruby syntax trees. It accepts the change when the old method
+body moves into `use` unchanged and one private candidate method is added.
+
+```sh
+bundle exec greenroom check
+bundle exec greenroom check <commit>
+bundle exec greenroom check --json <commit>
+```
+
+An accepted change exits with status 0. A rejected change exits with status
+1, and a usage error exits with status 2. The command writes one result line.
+The JSON form writes one object for CI.
+
+This check has been measured with synthetic Git repositories. It has not been
+measured with a pull request from a production codebase.
+
 ## Setup
 
 A host application writes three things.
@@ -53,9 +73,10 @@ end
 ```
 
 Include `Scientist::Experiment` first. `ExperimentBehavior#raised` must
-come later in the ancestor chain than `Scientist::Experiment#raised` (the
-one that re-raises) to actually override it; including the two in the
-other order would leave every internal failure re-raised into the caller.
+come earlier in the ancestor chain than `Scientist::Experiment#raised` (the
+one that re-raises) to override it. Ruby puts the module included later closer
+to the class. The other include order would re-raise every internal failure
+into the caller.
 
 `Scientist.run("price-v2") { |e| ... }` and `Scientist::Experiment.new(name)`
 both look up the registered class, so the rest of a host's code calls
@@ -137,7 +158,8 @@ target's `scope` is something else (an array, a CSV) overrides
 | `GreenroomCensus` | `Recorder#flush_total` | the run's full counts: `rows_scanned`, `comparisons`, `mismatches`, `ignored`, `candidate_errors`, `control_errors`, `row_errors` |
 
 A judge reads `comparisons` and the other counts from `GreenroomCensus`
-alone, never from `GreenroomCensusProgress`. A run sends exactly one
-`GreenroomCensus` event, even when it triggered zero comparisons: the
-event's presence, with `comparisons` at zero, is how a reader tells "ran
-and found nothing to compare" apart from "did not run at all".
+alone, never from `GreenroomCensusProgress`. A run sends one
+`GreenroomCensus` event for each recorded experiment name. It sends an event
+even when it triggered zero comparisons: the event's presence, with
+`comparisons` at zero, is how a reader tells "ran and found nothing to
+compare" apart from "did not run at all".

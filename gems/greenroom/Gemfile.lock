@@ -2,6 +2,7 @@ PATH
   remote: .
   specs:
     greenroom (0.1.0)
+      rubocop-ast (~> 1.50)
       scientist (~> 1.6, >= 1.6.5)
 
 GEM
@@ -79,6 +80,7 @@ DEPENDENCIES
   greenroom!
   minitest (= 6.0.6)
   rake (= 13.4.2)
+  rubocop-ast (= 1.50.0)
   sidekiq (= 8.1.6)
   standard (= 1.56.0)
 
