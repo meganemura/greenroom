@@ -153,9 +153,9 @@ target's `scope` is something else (an array, a CSV) overrides
 |---|---|---|
 | `GreenroomComparison` | `ExperimentBehavior#publish`, when no recorder is installed | one comparison's outcome |
 | `GreenroomInternalError` | `ExperimentBehavior#raised` | the operation and exception class that failed inside this gem's own instrumentation |
-| `GreenroomCensusProgress` | `Recorder#flush_segment` | a sign that the run is still alive, and any mismatch samples gathered so far |
-| `GreenroomMismatch` | `Recorder#flush_segment`, one per sample | a row identifier and digests, never the value itself |
-| `GreenroomCensus` | `Recorder#flush_total` | the run's full counts: `rows_scanned`, `comparisons`, `mismatches`, `ignored`, `candidate_errors`, `control_errors`, `row_errors` |
+| `GreenroomCensusProgress` | `Recorder#flush_segment` | a timestamp, a sign that the run is still alive, and any mismatch samples gathered so far |
+| `GreenroomMismatch` | `Recorder#flush_segment`, one per sample | a timestamp, a row identifier, and digests, never the value itself |
+| `GreenroomCensus` | `Recorder#flush_total` | a timestamp and the run's full counts: `rows_scanned`, `comparisons`, `mismatches`, `ignored`, `candidate_errors`, `control_errors`, `row_errors` |
 
 A judge reads `comparisons` and the other counts from `GreenroomCensus`
 alone, never from `GreenroomCensusProgress`. A run sends one

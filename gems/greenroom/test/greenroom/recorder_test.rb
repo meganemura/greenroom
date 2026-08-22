@@ -282,7 +282,37 @@ class Greenroom::RecorderTest < Minitest::Test
     refute recorder.snapshot.key?(:samples)
   end
 
+  def test_snapshot_does_not_include_the_timestamp
+    recorder = Greenroom::Recorder.new(run_id: "r1", clock: -> { Time.utc(2026, 8, 22) })
+
+    refute recorder.snapshot.key?("timestamp")
+    refute recorder.snapshot.key?(:timestamp)
+  end
+
   # -- flush_segment / flush_total: event kinds and counts -----------------
+
+  def test_flushes_add_the_injected_timestamp_to_each_event
+    timestamp = Time.utc(2026, 8, 22, 12, 30)
+    clock = -> { timestamp }
+    reporter = Greenroom::Reporter::Memory.new
+    recorder = Greenroom::Recorder.new(run_id: "r1", experiment: "price-v2", clock: clock)
+    recorder.record(mismatched_result(name: "price-v2"))
+
+    recorder.flush_segment(reporter)
+    recorder.flush_total(reporter)
+
+    assert_equal 3, reporter.events.size
+    reporter.events.each do |event|
+      # Assert the shape the event has to travel in, not just that the clock
+      # was consulted. The attribute reaches a metrics service and a judge as
+      # JSON, and a Time object survives neither.
+      assert_equal "2026-08-22T12:30:00Z", event.attributes[:timestamp]
+      assert_equal(
+        event.attributes[:timestamp],
+        JSON.parse(JSON.generate(event.attributes))["timestamp"]
+      )
+    end
+  end
 
   def test_flush_segment_sends_one_progress_event_and_one_mismatch_event_per_sample
     reporter = Greenroom::Reporter::Memory.new

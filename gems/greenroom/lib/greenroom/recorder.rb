@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Time#iso8601 lives in the time library rather than in the core class.
+require "time"
+
 require_relative "digest"
 
 module Greenroom
@@ -80,9 +83,12 @@ module Greenroom
     attr_reader :run_id, :sample_limit, :rows_scanned, :tallies, :samples
     attr_accessor :subject
 
-    def initialize(run_id:, experiment: nil, sample_limit: 100)
+    def initialize(run_id:, experiment: nil, sample_limit: 100, clock: -> { Time.now.utc })
       @run_id = run_id
       @sample_limit = sample_limit
+      # Reading the time directly would make tests depend on "now," which
+      # would make tests for the 30-day boundary impossible to write.
+      @clock = clock
       @rows_scanned = 0
       @row_errors = 0
       @tallies = {}
@@ -157,7 +163,9 @@ module Greenroom
     # would only grow memory for no benefit.
     def flush_segment(reporter)
       emit(reporter, "GreenroomCensusProgress")
-      @samples.each { |sample| reporter.record("GreenroomMismatch", sample) }
+      @samples.each do |sample|
+        reporter.record("GreenroomMismatch", sample.merge(timestamp: now))
+      end
       @samples.clear
     end
 
@@ -170,6 +178,14 @@ module Greenroom
     end
 
     private
+
+    # An event travels as JSON to whatever a host configured as its reporter,
+    # and a metrics service takes a string or a number for an attribute. A Time
+    # object survives neither, so the clock's reading becomes text here rather
+    # than at each call site, where one of them would eventually be missed.
+    def now
+      @clock.call.iso8601
+    end
 
     def tally_for(name)
       @tallies[name] ||= Tally.new
@@ -211,7 +227,8 @@ module Greenroom
           ignored: tally.ignored,
           candidate_errors: tally.candidate_errors,
           control_errors: tally.control_errors,
-          row_errors: @row_errors
+          row_errors: @row_errors,
+          timestamp: now
         })
       end
     end
