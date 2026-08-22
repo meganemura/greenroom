@@ -158,13 +158,18 @@ These release workflows are in the same repository as the gems.
 Replace `VERSION` with the exact version from the applicable `version.rb` file.
 For example, use `greenroom-v0.1.0` for `greenroom` version `0.1.0`.
 
-## MFA compatibility status
+## MFA and Trusted Publishing
 
-The primary guides do not confirm how Trusted Publishing works with
-`rubygems_mfa_required` set to `true`.
-The MFA guide states that all gem owners must enable MFA for a gem that requires MFA.
-The Trusted Publishing guide states that the workflow uses a short-lived API token.
-The guides do not state how that token interacts with the gem MFA requirement.
+A gem that sets `rubygems_mfa_required` to `true` publishes through Trusted
+Publishing. Measured on 2026-08-22: `greenroom` 0.1.0 carries that flag and
+released through the workflow in this repository, and RubyGems.org reports the
+flag on the published version.
+
+The guides state the two mechanisms separately and leave their interaction
+open. The MFA guide says that every owner of such a gem enables MFA, and the
+Trusted Publishing guide says that a workflow receives a short-lived API
+token. Neither describes the other, so this section records what the first
+release showed rather than what the guides promise.
 
 ## Primary sources
 
