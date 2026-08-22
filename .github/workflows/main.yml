@@ -11,20 +11,25 @@ permissions:
   contents: read
 
 jobs:
-  greenroom:
+  test:
     runs-on: ubuntu-latest
-    name: greenroom / Ruby ${{ matrix.ruby }}
+    name: ${{ matrix.gem }} / Ruby ${{ matrix.ruby }}
     defaults:
       run:
-        working-directory: gems/greenroom
+        working-directory: gems/${{ matrix.gem }}
     strategy:
       fail-fast: false
       matrix:
-        # The floor comes from the gemspec, and the top is the version that
-        # development uses. Run both, so that a change that needs a newer Ruby
-        # fails here rather than in a host application that sits on the floor.
+        # Every gem in the repository runs here. A gem left out of this list
+        # is a gem whose suite only ever runs on someone's laptop.
+        gem:
+          - greenroom
+          - rubocop-greenroom
+        # The floor each gemspec declares, and the version development uses.
+        # Running both means a change that needs a newer Ruby fails here
+        # rather than in a host application sitting on the floor.
         ruby:
-          - '3.2'
+          - '3.3'
           - '4.0.6'
 
     steps:
@@ -36,6 +41,6 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
-          working-directory: gems/greenroom
+          working-directory: gems/${{ matrix.gem }}
       - name: Run the default task
         run: bundle exec rake

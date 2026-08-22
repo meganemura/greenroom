@@ -42,8 +42,10 @@ The default Rake task runs the RSpec suite and Standard.
 
 The `.github/workflows/main.yml` workflow runs for pull requests and pushes to `main`.
 Its `greenroom` job uses `gems/greenroom` as the working directory.
-The job runs `bundle exec rake` with Ruby 3.2 and Ruby 4.0.6.
-The Ruby 3.2 entry checks the minimum Ruby version from the gemspec.
+The job runs `bundle exec rake` for each gem with Ruby 3.3 and Ruby 4.0.6.
+The Ruby 3.3 entry checks the minimum Ruby version from the gemspec.
+The matrix names each gem, so a gem left out of that list runs its suite
+nowhere except on a contributor's machine.
 The Ruby 4.0.6 entry checks the version that development uses.
 
 ## Update a version
