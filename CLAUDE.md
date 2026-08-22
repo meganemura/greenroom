@@ -149,10 +149,9 @@ The repository holds several distributable parts, so each one gets a
 directory of its own.
 
 - `gems/greenroom/`: the gem that a Rails application loads. The parts above
-  live here
-- `gems/greenroom-cli/`: the `greenroom` command. `greenroom check` reads a
-  diff and confirms the shape. `greenroom judge` reads the counts, applies the
-  thresholds, and opens the next pull request
+  live here, and so does the `greenroom` command in `exe/`. `greenroom check`
+  reads a commit and confirms the shape; `greenroom judge` will read the counts
+  and open the next pull request
 - `gems/rubocop-greenroom/`: the cops that read one file at a time. A rule
   that a single file shows belongs here, so that the linter an agent already
   runs rejects the shape while the agent still writes it
@@ -162,13 +161,17 @@ directory of its own.
 Each directory under `gems/` carries its own `Gemfile`, gemspec, and Rakefile,
 and `bundle exec rake` runs from inside it.
 
-### Why the command line is a gem of its own
+### Why the command ships with the library
 
-A person installs `greenroom-cli` on a CI runner or on a laptop, and a Rails
-application loads `greenroom` in its own bundle. The two carry different
-dependencies: the command reads an abstract syntax tree and talks to a metrics
-service, and the library keeps a single runtime dependency so that a host
-application pays for nothing it does not call.
+`greenroom check` reads a commit in the repository of the application that
+loads greenroom, and it runs in that repository's CI, inside that repository's
+bundle. Shipping it in the same gem means `bundle exec greenroom check` works
+wherever the library already does. See
+[ADR 7](docs/adr/0007-ship-the-command-inside-the-library-gem.md).
+
+The command loads its parser when it runs rather than when the library loads,
+so an application that boots this gem never parses Ruby it did not ask to
+parse. Keep it that way: nothing in `lib/greenroom.rb` may require the command.
 
 `greenroom check` stays a command rather than a cop, because it compares the
 body before the change against the body inside the `use` block. That

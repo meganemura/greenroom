@@ -4,7 +4,7 @@ Date: 2026-08-22
 
 ## Status
 
-Accepted.
+Superseded by [ADR 7](0007-ship-the-command-inside-the-library-gem.md).
 
 ## Context
 

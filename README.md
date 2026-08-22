@@ -36,8 +36,7 @@ schedule the team controls, so the evidence stops waiting for traffic.
 
 | Directory | What it holds |
 |---|---|
-| `gems/greenroom` | the gem a Rails application loads: the experiment methods, the recorder, the census core, and the boot assertion |
-| `gems/greenroom-cli` | the `greenroom` command: `greenroom check` reads a diff and confirms the shape, `greenroom judge` reads the counts and opens the next pull request |
+| `gems/greenroom` | the gem a Rails application loads: the experiment methods, the recorder, the census core, the boot assertion, and the `greenroom` command |
 | `gems/rubocop-greenroom` | the cops that read one file and reject a shape an agent should not write |
 | `skills` | the skills that teach the machinery |
 | `docs` | the architecture and decision records |
