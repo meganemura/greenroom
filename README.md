@@ -32,6 +32,46 @@ Two waits disappear. A machine reads the shape of the diff in minutes, so the
 merge stops waiting for a reviewer's calendar. The census reads every row on a
 schedule the team controls, so the evidence stops waiting for traffic.
 
+## Why not Scientist alone
+
+Scientist runs the old and candidate paths, compares their results, and
+publishes an observation. A team must still choose the evidence source, the
+execution context, and the decision process.
+
+Live traffic supplies evidence in a typical Scientist setup. A cold path can
+take months to produce enough observations. The candidate also runs inside the
+live request when the experiment is enabled. Scientist publishes the data, and
+a person decides what to do with it.
+
+Greenroom adds a nightly census that compares both paths for every target row.
+Evidence then follows a controlled schedule instead of traffic volume or luck.
+The census counts every scanned row and every comparison, and keeps the two
+apart. Their difference names the rows that a guard clause returned before they
+reached the experiment. It prevents an empty inspection from looking like a
+clean result.
+
+`greenroom check` inspects the diff shape and decides whether an automatic merge
+is safe. `greenroom judge` classifies the counts and creates an applicable patch
+for the next pull request.
+
+Scientist already ships experiments disabled by default because
+`Scientist::Default#enabled?` returns false. Greenroom changes how an application
+enables them. Its `enabled?` method returns true when the current thread has a
+recorder. The nightly census installs that recorder, while a live request does
+not. A typical Scientist setup instead connects this switch to a sampling rule.
+
+### When Scientist alone is enough
+
+Use Scientist alone when the path has enough live traffic to collect evidence
+quickly. Live traffic gives a better input distribution than a census in this
+case. Scientist also fits inputs from request parameters or a session. A census
+can construct inputs from table rows, so it cannot evaluate those request-only
+inputs. For one or two experiments, the census job, middleware, thresholds,
+judge, and CI wiring can cost more than they save.
+
+Greenroom becomes useful when agents create experiments faster than people can
+review them. It addresses a review queue, not one experiment.
+
 ## What is here
 
 | Directory | What it holds |
