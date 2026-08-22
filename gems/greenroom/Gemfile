@@ -1,0 +1,17 @@
+# frozen_string_literal: true
+
+source "https://rubygems.org"
+
+# Specify your gem's dependencies in greenroom.gemspec
+gemspec
+
+# Exact pins, so that a run here and a run in CI resolve the same code.
+gem "rake", "13.4.2"
+gem "minitest", "6.0.6"
+gem "standard", "1.56.0"
+
+# Sidekiq is a development dependency alone. The census core is plain Ruby, and
+# the Sidekiq job is an adapter that a host requires on purpose. The suite loads
+# the real gem, because the hooks this gem depends on -- `on_stop` on every
+# execution, and a job id that survives a resume -- are Sidekiq's own behaviour.
+gem "sidekiq", "8.1.6"

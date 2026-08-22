@@ -1,0 +1,41 @@
+name: Ruby
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  greenroom:
+    runs-on: ubuntu-latest
+    name: greenroom / Ruby ${{ matrix.ruby }}
+    defaults:
+      run:
+        working-directory: gems/greenroom
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor comes from the gemspec, and the top is the version that
+        # development uses. Run both, so that a change that needs a newer Ruby
+        # fails here rather than in a host application that sits on the floor.
+        ruby:
+          - '3.2'
+          - '4.0.6'
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+          working-directory: gems/greenroom
+      - name: Run the default task
+        run: bundle exec rake
