@@ -102,10 +102,16 @@ branch returns before the `Scientist.run` block, so the two numbers differ,
 and the difference names the rows that missed the experiment. A report that
 counted rows alone would call those rows checked.
 
-**A sample carries an identifier and a digest, and never the value.** A New
-Relic attribute holds 255 characters through the agent, so a sample that
-carried real data would lose most of it anyway. Send one event for each
-sample, and cap the number of samples that one run sends.
+**A sample carries an identifier and a digest, and never the value.** A census
+reads production rows, and a metrics service is not the place to copy them.
+That reason stands on its own, and no size limit is doing the work: measured
+against the Ruby agent at version 10.7.1, an attribute value is truncated at
+4095 characters rather than the 255 that applies to an attribute name.
+
+Send one event for each sample, and cap the number of samples that one run
+sends. The agent buffers 3000 custom events between harvests and drops by
+priority above that, so a run that sent every mismatch would compete with
+everything else the process reports.
 
 **Freeze each row before the call.** The candidate and the control run against
 the same object, and Scientist shuffles the order of the two. A frozen row
