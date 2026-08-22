@@ -8,6 +8,20 @@ require "yaml"
 require_relative "../../test_helper"
 
 class GreenroomCLIJudgeTest < Minitest::Test
+  ORIGINAL = <<~RUBY
+    class Pricing
+      def compute(order)
+        order.subtotal * rate(order)
+      end
+
+      private
+
+      def rate(order)
+        order.premium? ? 1.2 : 1.0
+      end
+    end
+  RUBY
+
   WRAPPED = <<~RUBY
     class Pricing
       def compute(order)
@@ -22,6 +36,10 @@ class GreenroomCLIJudgeTest < Minitest::Test
 
       def compute_v2(order)
         order.subtotal * new_rate(order)
+      end
+
+      def rate(order)
+        order.premium? ? 1.2 : 1.0
       end
     end
   RUBY
@@ -56,6 +74,18 @@ class GreenroomCLIJudgeTest < Minitest::Test
       assert_includes source, "    order.subtotal * rate(order)\n"
       refute_includes source, "Scientist.run"
       refute_includes source, "compute_v2"
+    end
+  end
+
+  def test_revert_restores_the_exact_source_from_before_the_wrap
+    in_repository do |repository|
+      write(repository, "pricing.rb", WRAPPED)
+      events = [event("first", "2026-08-20T02:00:00Z", "mismatches" => 1)]
+
+      stdout, _stderr, _status = run_judge(repository, events)
+
+      apply(repository, stdout.lines.drop(1).join)
+      assert_equal ORIGINAL.b, File.binread(File.join(repository, "pricing.rb"))
     end
   end
 
@@ -150,7 +180,29 @@ class GreenroomCLIJudgeTest < Minitest::Test
       verdict = result.fetch("verdicts").first
 
       assert_nil verdict.fetch("patch")
-      assert_match(/2 locations/, verdict.fetch("reason"))
+      assert_equal "1 mismatches", verdict.fetch("reason")
+      assert_match(/2 locations/, verdict.fetch("patch_error"))
+    end
+  end
+
+  def test_reports_the_verdict_reason_and_patch_failure_separately
+    [0, 2].each do |location_count|
+      in_repository do |repository|
+        if location_count == 2
+          write(repository, "pricing.rb", WRAPPED + "\n" + WRAPPED.sub("class Pricing", "class OtherPricing"))
+        end
+        events = [event("first", "2026-08-20T02:00:00Z", "mismatches" => 3)]
+
+        stdout, _stderr, _status = run_judge(repository, events)
+        json_stdout, _json_stderr, _json_status = run_judge(repository, events, json: true)
+        result = JSON.parse(json_stdout)
+        verdict = result.fetch("verdicts").first
+
+        assert_equal "price-v2: nogo (3 mismatches) -- no patch: the experiment has #{location_count} locations\n", stdout
+        assert_equal "3 mismatches", verdict.fetch("reason")
+        assert_equal "The experiment has #{location_count} locations.", verdict.fetch("patch_error")
+        assert_nil verdict.fetch("patch")
+      end
     end
   end
 

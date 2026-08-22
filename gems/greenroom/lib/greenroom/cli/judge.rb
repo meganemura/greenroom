@@ -19,7 +19,7 @@ module Greenroom
         "expiry_days" => 30,
         "minimum_comparison_ratio" => 0.8
       }.freeze
-      Verdict = Data.define(:experiment, :verdict, :reason, :patch)
+      Verdict = Data.define(:experiment, :verdict, :reason, :patch, :patch_error)
 
       class << self
         def run(arguments, stdout: $stdout, stderr: $stderr)
@@ -72,7 +72,12 @@ module Greenroom
           end
 
           verdicts.each do |item|
-            stdout.puts("#{item.experiment}: #{item.verdict} (#{item.reason})")
+            line = "#{item.experiment}: #{item.verdict} (#{item.reason})"
+            if item.patch_error
+              detail = item.patch_error.sub(/\A[A-Z]/) { |character| character.downcase }.delete_suffix(".")
+              line = "#{line} -- no patch: #{detail}"
+            end
+            stdout.puts(line)
             stdout.write(item.patch) if item.patch
           end
           errors.each { |error| stdout.puts("error: #{error}") }
@@ -121,11 +126,14 @@ module Greenroom
           previous = runs[-2]
           verdict, reason = decision(runs, latest, previous)
           patch = %w[go nogo expired].include?(verdict) ? Patch.new(@repository, name, verdict).call : nil
+          patch_error = nil
           if patch.is_a?(Array)
-            reason = patch.last
+            # Event data determines the verdict reason, but repository state
+            # determines the patch result. One result must not replace the other.
+            patch_error = patch.last
             patch = nil
           end
-          Verdict.new(name, verdict, reason, patch)
+          Verdict.new(name, verdict, reason, patch, patch_error)
         end
 
         def decision(runs, latest, previous)
@@ -229,6 +237,10 @@ module Greenroom
           use_body = match.use_block.children[2]
           changed = source.dup
           candidate_range = full_line_range(changed, match.candidate.source_range)
+          # Revert reviews compare the result byte for byte with the source from
+          # before the wrap. The separator before the candidate belongs to it.
+          preceding_line = changed.rindex("\n", candidate_range.begin - 2)&.+(1) || 0
+          candidate_range = preceding_line..candidate_range.end if changed[preceding_line...candidate_range.begin].strip.empty?
           changed.slice!(candidate_range)
           replace(changed, body.source_range, use_body.source)
         end
