@@ -21,5 +21,7 @@ Gem::Specification.new do |spec|
   spec.metadata["changelog_uri"] = "#{spec.homepage}/blob/main/gems/rubocop-greenroom/CHANGELOG.md"
   spec.metadata["rubygems_mfa_required"] = "true"
 
+  # RuboCop already supplies lint_roller as a runtime dependency, so this declaration resolves no new gem.
+  spec.add_dependency "lint_roller", "~> 1.1"
   spec.add_dependency "rubocop", "~> 1.88"
 end

@@ -2,6 +2,7 @@ PATH
   remote: .
   specs:
     rubocop-greenroom (0.1.0)
+      lint_roller (~> 1.1)
       rubocop (~> 1.88)
 
 GEM

@@ -2,6 +2,18 @@
 
 `rubocop-greenroom` reports structural problems that RuboCop can identify from one Ruby file.
 
+## Installation
+
+Add the gem to the development group in the host application's `Gemfile`:
+
+```ruby
+group :development do
+  gem "rubocop-greenroom", require: false
+end
+```
+
+The application does not load this development gem at runtime.
+
 Add the plugin to the host application's `.rubocop.yml`:
 
 ```yaml
