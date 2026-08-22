@@ -46,6 +46,102 @@ class GreenroomCLICheckTest < Minitest::Test
     end
   end
 
+  def test_accepts_a_guard_clause_before_the_wrapped_statements
+    before = ORIGINAL.sub(
+      "order.subtotal * rate(order)",
+      "return 0 if order.nil?\n    order.subtotal * rate(order)"
+    )
+    after = WRAPPED.sub(
+      "Scientist.run",
+      "return 0 if order.nil?\n    Scientist.run"
+    )
+
+    assert_accepted(before, after)
+  end
+
+  def test_accepts_an_assigned_run_with_an_unchanged_suffix
+    before = ORIGINAL.sub(
+      "order.subtotal * rate(order)",
+      "price = order.subtotal * rate(order)\n    price.round"
+    )
+    after = WRAPPED
+      .sub("Scientist.run", "price = Scientist.run")
+      .sub("end\n  end", "end\n    price.round\n  end")
+
+    assert_accepted(before, after)
+  end
+
+  def test_accepts_a_guard_clause_after_the_wrapped_statements
+    before = ORIGINAL.sub(
+      "order.subtotal * rate(order)",
+      "order.subtotal * rate(order)\n    return 0 if order.nil?"
+    )
+    after = WRAPPED.sub("end\n  end", "end\n    return 0 if order.nil?\n  end")
+
+    assert_accepted(before, after)
+  end
+
+  def test_accepts_an_unchanged_prefix_block
+    before = ORIGINAL.sub(
+      "order.subtotal * rate(order)",
+      "order.items.each { |item| audit(item) }\n    order.subtotal * rate(order)"
+    )
+    after = WRAPPED.sub(
+      "Scientist.run",
+      "order.items.each { |item| audit(item) }\n    Scientist.run"
+    )
+
+    assert_accepted(before, after)
+  end
+
+  def test_rejects_a_changed_prefix
+    before = ORIGINAL.sub("order.subtotal * rate(order)", "audit(:old)\n    order.subtotal * rate(order)")
+    after = WRAPPED.sub("Scientist.run", "audit(:new)\n    Scientist.run")
+
+    assert_rejected(before, after, "The use block must match the old method body.")
+  end
+
+  def test_rejects_a_changed_suffix
+    before = ORIGINAL.sub("order.subtotal * rate(order)", "order.subtotal * rate(order)\n    audit(:old)")
+    after = WRAPPED.sub("end\n  end", "end\n    audit(:new)\n  end")
+
+    assert_rejected(before, after, "The use block must match the old method body.")
+  end
+
+  def test_rejects_a_changed_middle_with_unchanged_outer_statements
+    before = ORIGINAL.sub(
+      "order.subtotal * rate(order)",
+      "audit(:before)\n    order.subtotal * rate(order)\n    audit(:after)"
+    )
+    after = WRAPPED
+      .sub("Scientist.run", "audit(:before)\n    Scientist.run")
+      .sub("rate(order)", "rate(order) + 1")
+      .sub("end\n  end", "end\n    audit(:after)\n  end")
+
+    assert_rejected(before, after, "The use block must match the old method body.")
+  end
+
+  def test_rejects_an_assigned_run_when_the_middle_does_not_end_with_an_assignment
+    before = ORIGINAL.sub("order.subtotal * rate(order)", "audit(order)\n    order.subtotal * rate(order)")
+    after = WRAPPED.sub("Scientist.run", "price = Scientist.run")
+
+    assert_rejected(before, after, "The use block must match the old method body.")
+  end
+
+  def test_rejects_a_scientist_run_nested_in_an_if
+    after = WRAPPED
+      .sub("Scientist.run", "if order\n      Scientist.run")
+      .sub("end\n  end", "end\n    end\n  end")
+
+    assert_rejected(ORIGINAL, after, "The Scientist.run call must be a direct method body statement.")
+  end
+
+  def test_rejects_a_multiple_assignment_of_scientist_run
+    after = WRAPPED.sub("Scientist.run", "price, error = Scientist.run")
+
+    assert_rejected(ORIGINAL, after, "The Scientist.run statement must be a bare call or a local variable assignment.")
+  end
+
   def test_accepts_unchanged_methods_and_classes
     before = ORIGINAL.sub("  def compute", "  def label = \"price\"\n\n  def compute") + <<~RUBY
 

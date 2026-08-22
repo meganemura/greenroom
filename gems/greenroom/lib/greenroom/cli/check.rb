@@ -160,12 +160,15 @@ module Greenroom
           return reject("Another class or module changed.") if other_scope_changed
 
           science = science_blocks(after_method)
-          return reject("The changed method body must contain one Scientist.run call.") unless science
+          unless science
+            shape_error = science_shape_error(after_method)
+            return reject(shape_error || "The changed method body must contain one Scientist.run call.")
+          end
 
-          use_block, try_block, _compare_block, experiment = science
-          return reject("The use block must match the old method body.") unless same_ast?(method_body(before_method), block_body(use_block))
-          # Tests found behavior changes for return and binding after a method
-          # body moved into a block. A return bypasses compare and publish.
+          use_block, try_block, _compare_block, experiment, science_statement = science
+          return reject("The use block must match the old method body.") unless matching_span?(before_method, after_method, science_statement, use_block)
+          # Tests found behavior changes when statements move into a block.
+          # A return in the moved part bypasses compare and publish.
           # A binding sees the block's local variables. Tests found the same
           # behavior for yield, rescue, ensure, __method__, local variables,
           # and constant references, so those forms remain valid.
@@ -258,10 +261,19 @@ module Greenroom
         end
 
         def science_blocks(method)
-          body = method_body(method)
-          return unless body&.block_type?
+          science_statements = method_statements(method).filter_map do |statement|
+            science_block = if statement.block_type?
+              statement
+            elsif statement.lvasgn_type? && statement.children[1]&.block_type?
+              statement.children[1]
+            end
+            [statement, science_block] if scientist_run_block?(science_block)
+          end
+          return unless science_statements.one?
 
-          send_node, arguments, science_body = body.children
+          science_statement, science_block = science_statements.first
+
+          send_node, arguments, science_body = science_block.children
           return unless send_node.send_type? && send_node.method?(:run)
           return unless send_node.receiver&.const_type? && send_node.receiver.const_name == "Scientist"
           return unless send_node.arguments.one? && send_node.arguments.first.str_type?
@@ -277,7 +289,62 @@ module Greenroom
               expression.send_node.receiver&.lvar_type? && expression.send_node.receiver.children.first == experiment_variable
           end
 
-          [*expressions, send_node.arguments.first.value]
+          [*expressions, send_node.arguments.first.value, science_statement]
+        end
+
+        def science_shape_error(method)
+          statement = method_statements(method).find do |item|
+            each_node(item).any? { |node| scientist_run_block?(node) }
+          end
+          return unless statement
+
+          direct_block = statement.lvasgn_type? ? statement.children[1] : statement
+          return if scientist_run_block?(direct_block)
+
+          if statement.masgn_type?
+            "The Scientist.run statement must be a bare call or a local variable assignment."
+          else
+            "The Scientist.run call must be a direct method body statement."
+          end
+        end
+
+        def scientist_run_block?(node)
+          return false unless node&.block_type?
+
+          send_node = node.send_node
+          send_node.method?(:run) && send_node.receiver&.const_type? && send_node.receiver.const_name == "Scientist"
+        end
+
+        def matching_span?(before_method, after_method, science_statement, use_block)
+          before = method_statements(before_method)
+          after = method_statements(after_method)
+          science_index = after.index(science_statement)
+          suffix_length = after.length - science_index - 1
+          middle_end = before.length - suffix_length
+          return false unless middle_end > science_index
+
+          # A statement outside the block keeps its position and behavior.
+          # Thus, the science block can wrap one body span.
+          prefix_matches = statement_values(before.take(science_index)) == statement_values(after.take(science_index))
+          suffix_matches = statement_values(before.drop(middle_end)) == statement_values(after.drop(science_index + 1))
+          middle = before[science_index...middle_end]
+          use = node_statements(block_body(use_block))
+          use_matches = if science_statement.lvasgn_type?
+            assignment = middle.last
+            assignment&.lvasgn_type? && assignment.children.first == science_statement.children.first &&
+              statement_values([*middle[0...-1], assignment.children[1]]) == statement_values(use)
+          else
+            statement_values(middle) == statement_values(use)
+          end
+          prefix_matches && suffix_matches && use_matches
+        end
+
+        def method_statements(method)
+          node_statements(method_body(method))
+        end
+
+        def node_statements(node)
+          node&.begin_type? ? node.children : [node].compact
         end
 
         def private_method?(scope, method)
