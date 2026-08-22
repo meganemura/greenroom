@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "greenroom/census/cursor"
+require "greenroom/census/job"
+require "greenroom/census/middleware"
 
-# An interruption and resume, driven by hand instead of through Sidekiq
-# (which needs Redis for `perform`; see `census/job_test.rb`). This proves
-# the actual guarantee `Cursor` exists for: that splitting a run into two
+# An interruption and resume, driven through `Census::Job#build_enumerator`
+# by hand instead of through Sidekiq (which needs Redis for `perform`; see
+# `census/job_test.rb`). This proves the actual guarantee `Cursor` and
+# `build_enumerator` exist for together: that splitting a run into two
 # segments produces the same totals as running it as one, because each
 # segment's `Recorder` starts from the counts attached to the cursor it
 # resumed from rather than from zero.
@@ -24,6 +26,8 @@ class Greenroom::Census::ResumeTest < Minitest::Test
   end
 
   class CountingTarget
+    ROWS = (1..10).to_a.freeze
+
     def experiment
       "resume-test"
     end
@@ -36,35 +40,36 @@ class Greenroom::Census::ResumeTest < Minitest::Test
     end
   end
 
-  def rows
-    (1..10).to_a
+  class ResumeJob < Greenroom::Census::Job
+    def target(*)
+      CountingTarget.new
+    end
+
+    def row_enumerator(*, cursor:)
+      array_enumerator(CountingTarget::ROWS, cursor: cursor)
+    end
   end
 
-  # Mimics a Sidekiq `array_enumerator`: yields `[item, index]` pairs, and
-  # can resume from a given offset -- the shape `Cursor.decorate` expects to
-  # wrap.
-  def array_enumerator(array, cursor:)
-    array.each_with_index.drop(cursor || 0).to_enum
+  def setup
+    super
+    Sidekiq.default_configuration.server_middleware { |chain| chain.add Greenroom::Census::Middleware }
+  end
+
+  def teardown
+    Sidekiq.default_configuration.server_middleware { |chain| chain.remove Greenroom::Census::Middleware }
+    super
   end
 
   def run_segment(cursor:, stop_after:)
-    recorder = Greenroom::Recorder.new(run_id: "r1", experiment: "resume-test")
-    position, counts = Greenroom::Census::Cursor.split(cursor)
-    recorder.restore(counts) if counts
+    job = ResumeJob.new
+    job.jid = "r1"
 
-    run = Greenroom::Census::Run.new(
-      target: CountingTarget.new,
-      recorder: recorder,
-      reader: Greenroom::Census::Reader::Direct.new
-    )
-
-    decorated = Greenroom::Census::Cursor.decorate(array_enumerator(rows, cursor: position), recorder)
+    enumerator = job.build_enumerator(cursor: cursor)
 
     last_cursor = cursor
-    Greenroom::Recorder.install(recorder)
     begin
-      decorated.each_with_index do |(row, row_cursor), i|
-        run.visit(row)
+      enumerator.each_with_index do |(row, row_cursor), i|
+        job.each_iteration(row)
         last_cursor = row_cursor
         break if stop_after && i + 1 == stop_after
       end
@@ -72,7 +77,7 @@ class Greenroom::Census::ResumeTest < Minitest::Test
       Greenroom::Recorder.uninstall
     end
 
-    [recorder, last_cursor]
+    [job.instance_variable_get(:@recorder), last_cursor]
   end
 
   def test_a_run_interrupted_and_resumed_does_not_double_count_rows

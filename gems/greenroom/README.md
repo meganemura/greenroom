@@ -117,13 +117,14 @@ reader with the same one-method interface; this gem does not ship a
 replica-reading implementation.
 
 `Greenroom::Census::Job` wires a target's `reader` and `each_iteration`
-into `Sidekiq::IterableJob`, and sends the `GreenroomCensusProgress` and
+into `Sidekiq::IterableJob`, installs and restores a `Greenroom::Recorder`
+keyed on the job's `jid`, and sends the `GreenroomCensusProgress` and
 `GreenroomCensus` events described below from `on_stop` and `on_complete`.
-It does not yet build the row enumerator itself: a subclass that wants to
-run today must implement `build_enumerator`, installing a
-`Greenroom::Recorder` keyed on `jid`, restoring its counts with
-`Greenroom::Census::Cursor.split(cursor)`, and wrapping its row source with
-`Greenroom::Census::Cursor.decorate` before returning it.
+Its default `row_enumerator` reads through Sidekiq's own
+`active_record_records_enumerator`, so a target whose `scope` is an
+ActiveRecord relation needs nothing beyond `target(*args)`; a host whose
+target's `scope` is something else (an array, a CSV) overrides
+`row_enumerator` instead.
 
 ## Events
 

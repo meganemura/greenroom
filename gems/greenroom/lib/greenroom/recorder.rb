@@ -131,7 +131,14 @@ module Greenroom
     def restore(snapshot)
       @rows_scanned = snapshot.fetch("rows_scanned", 0).to_i
       @row_errors = snapshot.fetch("row_errors", 0).to_i
-      @tallies = {}
+      # Merges into whatever `@tallies` already holds instead of replacing
+      # it outright. A resumed segment's `Recorder.new(experiment:)` seeds a
+      # zero tally under that name (see the comment in `initialize`) before
+      # `restore` ever runs; a snapshot taken before the first comparison
+      # for that name does not carry it, and replacing `@tallies` wholesale
+      # would erase the seeded zero and lose the name -- the run's later
+      # `flush_total` would then report `experiment: nil` instead of the
+      # name it was actually comparing.
       snapshot.fetch("tallies", {}).each do |name, counts|
         tally = tally_for(name)
         tally.comparisons = counts.fetch("comparisons", 0).to_i

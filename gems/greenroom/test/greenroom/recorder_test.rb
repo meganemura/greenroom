@@ -248,6 +248,32 @@ class Greenroom::RecorderTest < Minitest::Test
     assert_equal original_tally.mismatches, restored_tally.mismatches
   end
 
+  def test_restore_keeps_the_seeded_tally_when_the_snapshot_does_not_name_it
+    # `Recorder.new(experiment:)` seeds a zero tally under that name (see
+    # the comment in `initialize`), before a resumed segment's `restore`
+    # ever runs. A snapshot taken before the first comparison for that name
+    # does not carry it -- `restore` must keep the seeded zero rather than
+    # erase it, or the run's later `flush_total` would report
+    # `experiment: nil` instead of the name it is actually comparing.
+    recorder = Greenroom::Recorder.new(run_id: "r1", experiment: "price-v2")
+
+    recorder.restore({"rows_scanned" => 3, "tallies" => {}})
+
+    tally = recorder.tallies.fetch("price-v2")
+    assert_equal 0, tally.comparisons
+    assert_equal 3, recorder.rows_scanned
+  end
+
+  def test_restore_overwrites_a_tally_the_snapshot_does_name
+    recorder = Greenroom::Recorder.new(run_id: "r1", experiment: "price-v2")
+
+    recorder.restore({"tallies" => {"price-v2" => {"comparisons" => 4, "mismatches" => 1}}})
+
+    tally = recorder.tallies.fetch("price-v2")
+    assert_equal 4, tally.comparisons
+    assert_equal 1, tally.mismatches
+  end
+
   def test_snapshot_does_not_include_samples
     recorder = Greenroom::Recorder.new(run_id: "r1")
     recorder.record(mismatched_result)
