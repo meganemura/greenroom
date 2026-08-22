@@ -16,6 +16,7 @@ module Greenroom
       DEFAULTS = {
         "minimum_comparisons" => 1000,
         "consecutive_clean_nights" => 2,
+        "cleanup_clean_nights" => 2,
         "expiry_days" => 30,
         "minimum_comparison_ratio" => 0.8
       }.freeze
@@ -124,8 +125,11 @@ module Greenroom
         def evaluate(name, runs)
           latest = runs.last
           previous = runs[-2]
-          verdict, reason = decision(runs, latest, previous)
-          patch = %w[go nogo expired].include?(verdict) ? Patch.new(@repository, name, verdict).call : nil
+          patcher = Patch.new(@repository, name)
+          promoted = patcher.promoted?
+          promotion_time = patcher.promotion_time if promoted
+          verdict, reason = decision(runs, latest, previous, promoted, promotion_time)
+          patch = %w[go nogo expired cleanup].include?(verdict) ? patcher.call(verdict) : nil
           patch_error = nil
           if patch.is_a?(Array)
             # Event data determines the verdict reason, but repository state
@@ -136,15 +140,29 @@ module Greenroom
           Verdict.new(name, verdict, reason, patch, patch_error)
         end
 
-        def decision(runs, latest, previous)
+        def decision(runs, latest, previous, promoted, promotion_time)
           # Candidate failures, row failures, and a reduced sample question the
           # census itself. A person must validate the census before any
           # patch.
+          if promoted && latest.fetch("mismatches").positive?
+            return ["attention", "#{latest.fetch("mismatches")} mismatches in the promoted experiment"]
+          end
           attention = attention_reason(latest, previous)
           return ["attention", attention] if attention
           return ["nogo", "#{latest.fetch("mismatches")} mismatches"] if latest.fetch("mismatches").positive?
           if expired?(runs, latest)
             return ["expired", "#{latest.fetch("comparisons")} comparisons after #{@config.fetch("expiry_days")} days"]
+          end
+
+          if promoted
+            return ["waiting", "Git could not find the promotion commit."] unless promotion_time
+
+            post_promotion = runs.select { |run| Time.iso8601(run.fetch("timestamp")) > promotion_time }
+            clean = post_promotion.reverse.take_while { |run| clean?(run) }.length
+            needed = @config.fetch("cleanup_clean_nights")
+            return ["cleanup", "#{needed} clean nights after promotion"] if clean >= needed
+
+            return ["waiting", "#{clean} of #{needed} clean nights after promotion"]
           end
 
           # Scheduled runs do not replace a missed night. Counting reported runs
@@ -192,27 +210,52 @@ module Greenroom
       end
 
       class Patch
-        def initialize(repository, experiment, verdict)
+        def initialize(repository, experiment)
           @repository = repository
           @experiment = experiment
-          @verdict = verdict
         end
 
-        def call
+        def promoted?
+          matches.any? { |match| match.last.promoted }
+        end
+
+        def promotion_time
+          return unless matches.one?
+
+          path = matches.first.first.delete_prefix("#{@repository}/")
+          stdout, _stderr, status = Open3.capture3(
+            "git", "log", "-1", "--format=%cI", "-S", 'run: "candidate"', "--", path,
+            chdir: @repository
+          )
+          Time.iso8601(stdout.strip) if status.success? && !stdout.strip.empty?
+        rescue ArgumentError
+          nil
+        end
+
+        def call(verdict)
           matches = find_matches
           # Multiple locations make the patch target ambiguous. The judge stops
           # instead of changing a location that it cannot identify safely.
           return [nil, "The experiment has #{matches.length} locations."] unless matches.one?
 
           path, source, match = matches.first
-          changed = (@verdict == "go") ? promote(source, match) : revert(source, match)
+          if verdict == "cleanup" && argument_names(match.method) != argument_names(match.candidate)
+            return [nil, "The target and candidate argument names differ."]
+          end
+          changed = case verdict
+          when "go" then promote(source, match)
+          when "cleanup" then cleanup(source, match)
+          else revert(source, match)
+          end
           build(path, source, changed)
         end
 
         private
 
         def find_matches
-          Dir.glob(File.join(@repository, "**", "*.rb")).filter_map do |path|
+          return @matches if defined?(@matches)
+
+          @matches = Dir.glob(File.join(@repository, "**", "*.rb")).filter_map do |path|
             source = File.read(path)
             next unless source.include?(@experiment)
 
@@ -226,6 +269,12 @@ module Greenroom
           end.flatten(1)
         end
 
+        alias_method :matches, :find_matches
+
+        def argument_names(method)
+          method.children[1].children.map { |argument| argument.children.first }
+        end
+
         def promote(source, match)
           string = match.method.each_descendant(:str).find { |node| node.value == @experiment }
           offset = string.source_range.end_pos
@@ -235,14 +284,41 @@ module Greenroom
         def revert(source, match)
           body = match.method.children[2]
           use_body = match.use_block.children[2]
+          scope = match.candidate.each_ancestor(:class, :module, :sclass).first
           changed = source.dup
-          candidate_range = full_line_range(changed, match.candidate.source_range)
           # Revert reviews compare the result byte for byte with the source from
           # before the wrap. The separator before the candidate belongs to it.
-          preceding_line = changed.rindex("\n", candidate_range.begin - 2)&.+(1) || 0
-          candidate_range = preceding_line..candidate_range.end if changed[preceding_line...candidate_range.begin].strip.empty?
+          candidate_range = method_removal_range(changed, match.candidate.source_range)
           changed.slice!(candidate_range)
-          replace(changed, body.source_range, use_body.source)
+          remove_trailing_private(replace(changed, body.source_range, use_body.source), scope)
+        end
+
+        def cleanup(source, match)
+          changed = source.dup
+          scope = match.candidate.each_ancestor(:class, :module, :sclass).first
+          candidate_range = method_removal_range(changed, match.candidate.source_range)
+          edits = [
+            [candidate_range.begin, candidate_range.end + 1, ""],
+            [match.method.children[2].source_range.begin_pos, match.method.children[2].source_range.end_pos,
+              match.candidate.children[2].source]
+          ]
+          edits.sort_by(&:first).reverse_each do |start_position, end_position, replacement|
+            changed[start_position...end_position] = replacement
+          end
+          remove_trailing_private(changed, scope)
+        end
+
+        def remove_trailing_private(source, original_scope)
+          processed = RuboCop::AST::ProcessedSource.new(source, 3.2)
+          scope = processed.ast.each_node(original_scope.type)
+            .find { |node| node.source_range.begin_pos == original_scope.source_range.begin_pos }
+          statement = scope&.body&.begin_type? ? scope.body.children.last : scope&.body
+          return source unless statement&.send_type? && statement.receiver.nil? &&
+            statement.method?(:private) && statement.arguments.empty?
+
+          # The result must depend on one file version. Patch history is not available when a host applies the cleanup.
+          range = method_removal_range(source, statement.source_range)
+          source.dup.tap { |changed| changed.slice!(range.begin, range.size) }
         end
 
         def replace(source, range, replacement)
@@ -253,6 +329,14 @@ module Greenroom
           start = source.rindex("\n", range.begin_pos - 1)&.+(1) || 0
           finish = source.index("\n", range.end_pos) || source.length - 1
           start..finish
+        end
+
+        def method_removal_range(source, range)
+          method_range = full_line_range(source, range)
+          preceding_line = source.rindex("\n", method_range.begin - 2)&.+(1) || 0
+          return method_range unless source[preceding_line...method_range.begin].strip.empty?
+
+          preceding_line..method_range.end
         end
 
         def build(path, before, after)

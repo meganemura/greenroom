@@ -107,7 +107,7 @@ module Greenroom
       class Analyzer
         SourceError = Class.new(StandardError)
         Scope = Data.define(:name, :node, :methods, :statements)
-        Experiment = Data.define(:name, :method, :use_block, :candidate)
+        Experiment = Data.define(:name, :method, :use_block, :candidate, :promoted)
 
         def initialize(before, after)
           # Syntax trees omit source locations. Therefore, comment and white
@@ -187,12 +187,12 @@ module Greenroom
               science = science_blocks(method)
               next unless science
 
-              use_block, try_block, _compare_block, name = science
+              use_block, try_block, _compare_block, name, _statement, promoted = science
               try_body = block_body(try_block)
               next unless try_body&.send_type? && try_body.receiver.nil?
 
               candidate = scope.methods[try_body.method_name]
-              Experiment.new(name, method, use_block, candidate) if candidate
+              Experiment.new(name, method, use_block, candidate, promoted) if candidate
             end
           end
         end
@@ -276,7 +276,7 @@ module Greenroom
           send_node, arguments, science_body = science_block.children
           return unless send_node.send_type? && send_node.method?(:run)
           return unless send_node.receiver&.const_type? && send_node.receiver.const_name == "Scientist"
-          return unless send_node.arguments.one? && send_node.arguments.first.str_type?
+          return unless supported_run_arguments?(send_node.arguments)
           return unless arguments.one?
 
           experiment_variable = arguments.children.first.children.first
@@ -289,7 +289,18 @@ module Greenroom
               expression.send_node.receiver&.lvar_type? && expression.send_node.receiver.children.first == experiment_variable
           end
 
-          [*expressions, send_node.arguments.first.value, science_statement]
+          [*expressions, send_node.arguments.first.value, science_statement, send_node.arguments.length == 2]
+        end
+
+        def supported_run_arguments?(arguments)
+          return false unless arguments.first&.str_type?
+          return true if arguments.one?
+          return false unless arguments.length == 2
+
+          pair = arguments.last
+          pair = pair.children.first if pair.hash_type? && pair.children.one?
+          pair&.pair_type? && pair.children.first.sym_type? && pair.children.first.value == :run &&
+            pair.children.last.str_type? && pair.children.last.value == "candidate"
         end
 
         def science_shape_error(method)

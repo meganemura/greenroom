@@ -22,6 +22,14 @@ class GreenroomCLIJudgeTest < Minitest::Test
     end
   RUBY
 
+  ORIGINAL_WITHOUT_PRIVATE = <<~RUBY
+    class Pricing
+      def compute(order)
+        order.subtotal * 1.0
+      end
+    end
+  RUBY
+
   WRAPPED = <<~RUBY
     class Pricing
       def compute(order)
@@ -43,6 +51,240 @@ class GreenroomCLIJudgeTest < Minitest::Test
       end
     end
   RUBY
+
+  WRAPPED_WITHOUT_ORIGINAL_PRIVATE = <<~RUBY
+    class Pricing
+      def compute(order)
+        Scientist.run "price-v2" do |experiment|
+          experiment.use { order.subtotal * 1.0 }
+          experiment.try { compute_v2(order) }
+          experiment.compare { |control, candidate| control == candidate }
+        end
+      end
+
+      private
+
+      def compute_v2(order)
+        order.premium? ? order.subtotal * 1.2 : order.subtotal * 1.0
+      end
+    end
+  RUBY
+
+  PROMOTED = WRAPPED.sub('Scientist.run "price-v2"', 'Scientist.run "price-v2", run: "candidate"')
+
+  WRAPPED_WITH_TRAILING_PRIVATE = <<~RUBY
+    class Pricing
+      def compute(order)
+        Scientist.run "price-v2" do |experiment|
+          experiment.use { order.subtotal * 1.0 }
+          experiment.try { compute_v2(order) }
+          experiment.compare { |control, candidate| control == candidate }
+        end
+      end
+
+      private
+
+      def compute_v2(order)
+        order.premium? ? order.subtotal * 1.2 : order.subtotal * 1.0
+      end
+    end
+  RUBY
+
+  PROMOTED_WITH_TRAILING_PRIVATE = WRAPPED_WITH_TRAILING_PRIVATE
+    .sub('Scientist.run "price-v2"', 'Scientist.run "price-v2", run: "candidate"')
+
+  def test_cleans_up_after_two_post_promotion_clean_runs
+    in_repository do |repository|
+      write_and_commit_at(repository, "pricing.rb", WRAPPED, "2026-08-19T02:00:00Z")
+      write_and_commit_at(repository, "pricing.rb", PROMOTED, "2026-08-20T02:00:00Z")
+      events = [event("first", "2026-08-21T02:00:00Z"), event("second", "2026-08-22T02:00:00Z")]
+
+      result = run_json(events, repository:)
+
+      assert_equal "cleanup", result.fetch("verdicts").first.fetch("verdict")
+      assert_kind_of String, result.fetch("verdicts").first.fetch("patch")
+    end
+  end
+
+  def test_cleanup_patch_inlines_the_candidate_body_and_removes_the_candidate_method
+    in_repository do |repository|
+      write_and_commit_at(repository, "pricing.rb", WRAPPED, "2026-08-19T02:00:00Z")
+      write_and_commit_at(repository, "pricing.rb", PROMOTED, "2026-08-20T02:00:00Z")
+      events = [event("first", "2026-08-21T02:00:00Z"), event("second", "2026-08-22T02:00:00Z")]
+
+      patch = run_json(events, repository:).fetch("verdicts").first.fetch("patch")
+      apply(repository, patch)
+      source = File.read(File.join(repository, "pricing.rb"))
+
+      assert_includes source, "  def compute(order)\n    order.subtotal * new_rate(order)\n  end"
+      refute_includes source, "Scientist.run"
+      refute_includes source, "def compute_v2"
+    end
+  end
+
+  def test_cleanup_patch_removes_a_trailing_private_modifier
+    in_repository do |repository|
+      write_and_commit_at(repository, "pricing.rb", WRAPPED_WITH_TRAILING_PRIVATE, "2026-08-19T02:00:00Z")
+      write_and_commit_at(repository, "pricing.rb", PROMOTED_WITH_TRAILING_PRIVATE, "2026-08-20T02:00:00Z")
+      events = [event("first", "2026-08-21T02:00:00Z"), event("second", "2026-08-22T02:00:00Z")]
+
+      patch = run_json(events, repository:).fetch("verdicts").first.fetch("patch")
+      apply(repository, patch)
+
+      refute_includes File.read(File.join(repository, "pricing.rb")), "  private\n"
+    end
+  end
+
+  def test_cleanup_patch_passes_standard
+    in_repository do |repository|
+      write_and_commit_at(repository, "pricing.rb", WRAPPED_WITH_TRAILING_PRIVATE, "2026-08-19T02:00:00Z")
+      write_and_commit_at(repository, "pricing.rb", PROMOTED_WITH_TRAILING_PRIVATE, "2026-08-20T02:00:00Z")
+      events = [event("first", "2026-08-21T02:00:00Z"), event("second", "2026-08-22T02:00:00Z")]
+
+      patch = run_json(events, repository:).fetch("verdicts").first.fetch("patch")
+      apply(repository, patch)
+
+      assert_standard_clean(repository)
+    end
+  end
+
+  def test_cleanup_patch_keeps_private_when_another_method_follows
+    in_repository do |repository|
+      write_and_commit_at(repository, "pricing.rb", WRAPPED, "2026-08-19T02:00:00Z")
+      write_and_commit_at(repository, "pricing.rb", PROMOTED, "2026-08-20T02:00:00Z")
+      events = [event("first", "2026-08-21T02:00:00Z"), event("second", "2026-08-22T02:00:00Z")]
+
+      patch = run_json(events, repository:).fetch("verdicts").first.fetch("patch")
+      apply(repository, patch)
+
+      assert_match(/  private\n\s+def rate\(order\)/, File.read(File.join(repository, "pricing.rb")))
+    end
+  end
+
+  def test_cleanup_patch_keeps_private_with_a_symbol_argument
+    wrapped = WRAPPED_WITH_TRAILING_PRIVATE.sub("  end\nend\n", "  end\n\n  private :compute_v2\nend\n")
+    promoted = wrapped.sub('Scientist.run "price-v2"', 'Scientist.run "price-v2", run: "candidate"')
+    in_repository do |repository|
+      write_and_commit_at(repository, "pricing.rb", wrapped, "2026-08-19T02:00:00Z")
+      write_and_commit_at(repository, "pricing.rb", promoted, "2026-08-20T02:00:00Z")
+      events = [event("first", "2026-08-21T02:00:00Z"), event("second", "2026-08-22T02:00:00Z")]
+
+      patch = run_json(events, repository:).fetch("verdicts").first.fetch("patch")
+      apply(repository, patch)
+
+      assert_includes File.read(File.join(repository, "pricing.rb")), "  private :compute_v2\n"
+    end
+  end
+
+  def test_does_not_count_clean_runs_from_before_promotion
+    in_repository do |repository|
+      write_and_commit_at(repository, "pricing.rb", WRAPPED, "2026-08-19T02:00:00Z")
+      write_and_commit_at(repository, "pricing.rb", PROMOTED, "2026-08-22T02:00:00Z")
+      events = [event("first", "2026-08-20T02:00:00Z"), event("second", "2026-08-21T02:00:00Z")]
+
+      verdict = run_json(events, repository:).fetch("verdicts").first
+
+      assert_equal "waiting", verdict.fetch("verdict")
+      assert_equal "0 of 2 clean nights after promotion", verdict.fetch("reason")
+    end
+  end
+
+  def test_reports_attention_for_a_mismatch_after_promotion
+    in_repository do |repository|
+      write_and_commit_at(repository, "pricing.rb", WRAPPED, "2026-08-19T02:00:00Z")
+      write_and_commit_at(repository, "pricing.rb", PROMOTED, "2026-08-20T02:00:00Z")
+      events = [event("first", "2026-08-21T02:00:00Z", "mismatches" => 1)]
+
+      verdict = run_json(events, repository:).fetch("verdicts").first
+
+      assert_equal "attention", verdict.fetch("verdict")
+      assert_match(/promoted/, verdict.fetch("reason"))
+      assert_nil verdict.fetch("patch")
+    end
+  end
+
+  def test_mentions_promotion_when_a_mismatch_and_candidate_error_need_attention
+    in_repository do |repository|
+      write_and_commit_at(repository, "pricing.rb", WRAPPED, "2026-08-19T02:00:00Z")
+      write_and_commit_at(repository, "pricing.rb", PROMOTED, "2026-08-20T02:00:00Z")
+      events = [event("first", "2026-08-21T02:00:00Z", "mismatches" => 1, "candidate_errors" => 1)]
+
+      verdict = run_json(events, repository:).fetch("verdicts").first
+
+      assert_equal "attention", verdict.fetch("verdict")
+      assert_match(/promoted/, verdict.fetch("reason"))
+      assert_nil verdict.fetch("patch")
+    end
+  end
+
+  def test_reports_attention_for_promoted_mismatches_at_ambiguous_locations
+    in_repository do |repository|
+      write_and_commit_at(repository, "pricing.rb", WRAPPED, "2026-08-19T02:00:00Z")
+      sources = PROMOTED + "\n" + PROMOTED.sub("class Pricing", "class OtherPricing")
+      write_and_commit_at(repository, "pricing.rb", sources, "2026-08-20T02:00:00Z")
+      events = [event("first", "2026-08-21T02:00:00Z", "mismatches" => 1)]
+
+      verdict = run_json(events, repository:).fetch("verdicts").first
+
+      assert_equal "attention", verdict.fetch("verdict")
+      assert_match(/promoted/, verdict.fetch("reason"))
+      assert_nil verdict.fetch("patch")
+    end
+  end
+
+  def test_does_not_clean_up_an_unpromoted_experiment
+    in_repository do |repository|
+      write_and_commit_at(repository, "pricing.rb", WRAPPED, "2026-08-19T02:00:00Z")
+      events = [event("first", "2026-08-20T02:00:00Z"), event("second", "2026-08-21T02:00:00Z")]
+
+      verdict = run_json(events, repository:).fetch("verdicts").first
+
+      refute_equal "cleanup", verdict.fetch("verdict")
+    end
+  end
+
+  def test_waits_when_git_cannot_find_the_promotion_commit
+    in_repository do |repository|
+      write(repository, "pricing.rb", PROMOTED)
+      events = [event("first", "2026-08-21T02:00:00Z"), event("second", "2026-08-22T02:00:00Z")]
+
+      verdict = run_json(events, repository:).fetch("verdicts").first
+
+      assert_equal "waiting", verdict.fetch("verdict")
+      assert_match(/Git could not find the promotion commit/, verdict.fetch("reason"))
+      assert_nil verdict.fetch("patch")
+    end
+  end
+
+  def test_uses_the_configured_cleanup_clean_nights
+    in_repository do |repository|
+      write_and_commit_at(repository, "pricing.rb", WRAPPED, "2026-08-19T02:00:00Z")
+      write_and_commit_at(repository, "pricing.rb", PROMOTED, "2026-08-20T02:00:00Z")
+      events = [event("first", "2026-08-21T02:00:00Z"), event("second", "2026-08-22T02:00:00Z")]
+
+      verdict = run_json(events, config: {"cleanup_clean_nights" => 3}, repository:).fetch("verdicts").first
+
+      assert_equal "waiting", verdict.fetch("verdict")
+      assert_equal "2 of 3 clean nights after promotion", verdict.fetch("reason")
+    end
+  end
+
+  def test_does_not_make_a_cleanup_patch_when_argument_names_differ
+    promoted = PROMOTED
+      .sub("def compute_v2(order)", "def compute_v2(invoice)")
+      .sub("order.subtotal * new_rate(order)", "invoice.subtotal * new_rate(invoice)")
+    in_repository do |repository|
+      write_and_commit_at(repository, "pricing.rb", WRAPPED, "2026-08-19T02:00:00Z")
+      write_and_commit_at(repository, "pricing.rb", promoted, "2026-08-20T02:00:00Z")
+      events = [event("first", "2026-08-21T02:00:00Z"), event("second", "2026-08-22T02:00:00Z")]
+
+      verdict = run_json(events, repository:).fetch("verdicts").first
+
+      assert_equal "cleanup", verdict.fetch("verdict")
+      assert_nil verdict.fetch("patch")
+      assert_match(/argument names differ/, verdict.fetch("patch_error"))
+    end
+  end
 
   def test_promotes_after_two_clean_runs_and_outputs_an_applicable_patch
     in_repository do |repository|
@@ -86,6 +328,26 @@ class GreenroomCLIJudgeTest < Minitest::Test
 
       apply(repository, stdout.lines.drop(1).join)
       assert_equal ORIGINAL.b, File.binread(File.join(repository, "pricing.rb"))
+    end
+  end
+
+  def test_revert_and_expiry_restore_source_without_an_original_private_modifier
+    assert_revert_and_expiry_restore(WRAPPED_WITHOUT_ORIGINAL_PRIVATE, ORIGINAL_WITHOUT_PRIVATE)
+  end
+
+  def test_revert_and_expiry_restore_source_with_an_original_private_method
+    assert_revert_and_expiry_restore(WRAPPED, ORIGINAL)
+  end
+
+  def test_revert_patch_passes_standard
+    in_repository do |repository|
+      write(repository, "pricing.rb", WRAPPED)
+      events = [event("first", "2026-08-20T02:00:00Z", "mismatches" => 1)]
+
+      stdout, _stderr, _status = run_judge(repository, events)
+
+      apply(repository, stdout.lines.drop(1).join)
+      assert_standard_clean(repository)
     end
   end
 
@@ -147,6 +409,20 @@ class GreenroomCLIJudgeTest < Minitest::Test
 
     assert_equal "expired", result.fetch("verdicts").first.fetch("verdict")
     assert_kind_of String, result.fetch("verdicts").first.fetch("patch")
+  end
+
+  def test_expiry_patch_passes_standard
+    in_repository do |repository|
+      write(repository, "pricing.rb", WRAPPED)
+      events = [event("first", "2026-08-20T02:00:00Z", "comparisons" => 10),
+        event("second", "2026-08-22T02:00:00Z", "comparisons" => 10)]
+
+      patch = run_json(events, config: {"expiry_days" => 1}, repository:)
+        .fetch("verdicts").first.fetch("patch")
+
+      apply(repository, patch)
+      assert_standard_clean(repository)
+    end
   end
 
   def test_keeps_runs_consecutive_across_a_missing_calendar_night
@@ -215,6 +491,39 @@ class GreenroomCLIJudgeTest < Minitest::Test
 
   private
 
+  def assert_revert_and_expiry_restore(wrapped, original)
+    # Revert and expiry have the earlier source for an exact comparison.
+    # Cleanup has no earlier source, so the linter is its only check for a remnant.
+    event_sets = [
+      [[event("nogo", "2026-08-20T02:00:00Z", "mismatches" => 1)], {}],
+      [[event("first", "2026-08-20T02:00:00Z", "comparisons" => 10),
+        event("expired", "2026-08-22T02:00:00Z", "comparisons" => 10)], {"expiry_days" => 1}]
+    ]
+
+    event_sets.each do |events, config|
+      in_repository do |repository|
+        write(repository, "pricing.rb", wrapped)
+        patch = run_json(events, config:, repository:).fetch("verdicts").first.fetch("patch")
+
+        apply(repository, patch)
+        assert_equal original.b, File.binread(File.join(repository, "pricing.rb"))
+      end
+    end
+  end
+
+  def assert_standard_clean(repository)
+    # The full linter detects different remnants from each patch path.
+    # A rule-specific check would cover the current remnant instead of the defect class.
+    environment = {"XDG_CACHE_HOME" => File.join(repository, ".cache")}
+    executable = Gem.bin_path("standard", "standardrb")
+    config = File.expand_path("../../../.standard.yml", __dir__)
+    stdout, stderr, status = Open3.capture3(
+      environment, RbConfig.ruby, executable, "--config", config, "pricing.rb", chdir: repository
+    )
+
+    assert_predicate status, :success?, stdout + stderr
+  end
+
   def event(run_id, timestamp, overrides = {})
     {
       "run_id" => run_id,
@@ -245,8 +554,18 @@ class GreenroomCLIJudgeTest < Minitest::Test
   def in_repository
     Dir.mktmpdir("greenroom-judge") do |directory|
       git(directory, "init", "--quiet")
+      git(directory, "config", "user.email", "greenroom@example.com")
+      git(directory, "config", "user.name", "Greenroom Test")
       yield directory
     end
+  end
+
+  def write_and_commit_at(repository, path, content, timestamp)
+    write(repository, path, content)
+    git(repository, "add", path)
+    environment = {"GIT_AUTHOR_DATE" => timestamp, "GIT_COMMITTER_DATE" => timestamp}
+    _stdout, stderr, status = Open3.capture3(environment, "git", "commit", "--quiet", "-m", "fixture", chdir: repository)
+    raise stderr unless status.success?
   end
 
   def write(directory, path, content)
