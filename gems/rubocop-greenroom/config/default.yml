@@ -1,0 +1,14 @@
+Greenroom/ScienceBlockShape:
+  Description: Requires use, try, and compare once, in that order.
+  Enabled: true
+  VersionAdded: '0.1'
+
+Greenroom/UnsafeScienceBody:
+  Description: Rejects return and binding in science bodies when they change behavior.
+  Enabled: true
+  VersionAdded: '0.1'
+
+Greenroom/CandidateIsPrivate:
+  Description: Requires a same-class candidate method to be private when its definition is visible.
+  Enabled: true
+  VersionAdded: '0.1'
