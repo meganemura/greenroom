@@ -1,0 +1,61 @@
+name: Release rubocop-greenroom
+
+on:
+  push:
+    tags:
+      - "rubocop-greenroom-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: gems/rubocop-greenroom
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          # Pinned rather than "latest": this job runs the suite as the gate
+          # before a push nobody can take back, so a Ruby released this morning
+          # must not decide whether a release goes out.
+          ruby-version: '4.0.6'
+          bundler-cache: true
+          working-directory: gems/rubocop-greenroom
+      - name: Verify the tag version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          tag_version="${RELEASE_TAG#rubocop-greenroom-v}"
+          gem_version="$(bundle exec ruby -Ilib -rrubocop/greenroom/version -e 'print RuboCop::Greenroom::VERSION')"
+          if [ "$tag_version" != "$gem_version" ]; then
+            echo "The tag version $tag_version does not match the gem version $gem_version." >&2
+            exit 1
+          fi
+      - name: Run the default task
+        run: bundle exec rake
+      - name: Configure RubyGems credentials
+        uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a
+      - name: Build the gem
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="${RELEASE_TAG#rubocop-greenroom-v}"
+          mkdir -p pkg
+          bundle exec gem build rubocop-greenroom.gemspec --output "pkg/rubocop-greenroom-${version}.gem"
+      - name: Push the gem
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="${RELEASE_TAG#rubocop-greenroom-v}"
+          gem push "pkg/rubocop-greenroom-${version}.gem"
